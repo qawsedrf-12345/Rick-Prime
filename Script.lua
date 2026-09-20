@@ -1,4 +1,224 @@
 --=============================================================
+-- 🛡️ ANTI-FLING UNIVERSAL v2.0
+-- Destrói física/constraints injetadas + reseta Humanoid
+-- Cobre: Body*, Align*, LinearVelocity, VectorForce, Welds, etc
+--=============================================================
+
+if getgenv().AntiFlingLoaded then return end
+getgenv().AntiFlingLoaded = true
+
+local Players    = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+--=============================================================
+-- CONFIG
+--=============================================================
+local CONFIG_AF = {
+    Ativo             = true,
+    IntervaloVarredura = 0.1,
+    DuracaoReforco    = 3,
+    Debug             = false,
+}
+
+--=============================================================
+-- CLASSES PERIGOSAS
+--=============================================================
+local CLASSES_PERIGOSAS = {
+    ["BodyVelocity"]        = true,
+    ["BodyGyro"]            = true,
+    ["BodyAngularVelocity"] = true,
+    ["BodyForce"]           = true,
+    ["BodyThrust"]          = true,
+    ["BodyPosition"]        = true,
+    ["LinearVelocity"]      = true,
+    ["AngularVelocity"]     = true,
+    ["AlignPosition"]       = true,
+    ["AlignOrientation"]    = true,
+    ["VectorForce"]         = true,
+    ["Torque"]              = true,
+    ["RopeConstraint"]         = true,
+    ["RodConstraint"]          = true,
+    ["HingeConstraint"]        = true,
+    ["BallSocketConstraint"]   = true,
+    ["UniversalConstraint"]    = true,
+    ["PrismaticConstraint"]    = true,
+    ["CylindricalConstraint"]  = true,
+    ["SpringConstraint"]       = true,
+    ["PlaneConstraint"]        = true,
+    ["WeldConstraint"] = true,
+    ["ManualWeld"]     = true,
+    ["Weld"]           = true,
+    ["Motor"]          = true,
+    ["Motor6D"]        = true,
+    ["Snap"]           = true,
+    ["Rotate"]         = true,
+    ["RotateP"]        = true,
+    ["RotateV"]        = true,
+    ["Glue"]           = true,
+}
+
+local function logAF(...)
+    if CONFIG_AF.Debug then print("[AntiFling]", ...) end
+end
+
+local function ehClassePerigosa(inst)
+    if not inst or not inst.Parent then return false end
+    return CLASSES_PERIGOSAS[inst.ClassName] == true
+end
+
+local function jaProtegido(inst)
+    return inst:FindFirstChild("__FlingProtected") ~= nil
+end
+
+local function marcarProtegido(inst)
+    if jaProtegido(inst) then return end
+    local marker = Instance.new("BoolValue")
+    marker.Name = "__FlingProtected"
+    marker.Parent = inst
+end
+
+local function limparInstancia(inst, char)
+    if not CONFIG_AF.Ativo then return end
+    if not inst or not inst.Parent then return end
+
+    if ehClassePerigosa(inst) then
+        logAF("🗑️ Removendo:", inst.ClassName, inst:GetFullName())
+        pcall(function() inst:Destroy() end)
+        return
+    end
+
+    if inst:IsA("BasePart") and not jaProtegido(inst) then
+        marcarProtegido(inst)
+        pcall(function()
+            inst.ChildAdded:Connect(function(child)
+                limparInstancia(child, char)
+            end)
+        end)
+    end
+end
+
+local function resetarHumanoid(char)
+    if not char then return end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+
+    pcall(function()
+        if humanoid.Sit then humanoid.Sit = false end
+        if humanoid.PlatformStand then humanoid.PlatformStand = false end
+        if humanoid.WalkSpeed <= 0 then humanoid.WalkSpeed = 16 end
+        if humanoid.JumpPower <= 0 and humanoid.UseJumpPower then humanoid.JumpPower = 50 end
+    end)
+end
+
+local function varrerCharacter(char)
+    if not CONFIG_AF.Ativo or not char then return end
+
+    for _, obj in ipairs(char:GetDescendants()) do
+        if ehClassePerigosa(obj) then
+            logAF("🗑️ Varredura removeu:", obj.ClassName, obj:GetFullName())
+            pcall(function() obj:Destroy() end)
+        end
+    end
+
+    resetarHumanoid(char)
+end
+
+local conexoesChar = {}
+
+local function limparConexoesChar()
+    for _, conn in ipairs(conexoesChar) do
+        pcall(function() if conn and conn.Disconnect then conn:Disconnect() end end)
+    end
+    conexoesChar = {}
+end
+
+local function monitorarCharacter(char)
+    if not char then return end
+
+    limparConexoesChar()
+    varrerCharacter(char)
+
+    local connChar = char.ChildAdded:Connect(function(obj)
+        limparInstancia(obj, char)
+    end)
+    table.insert(conexoesChar, connChar)
+
+    local hrp = char:WaitForChild("HumanoidRootPart", 5)
+    if hrp then
+        marcarProtegido(hrp)
+        local connHrp = hrp.ChildAdded:Connect(function(obj)
+            limparInstancia(obj, char)
+        end)
+        table.insert(conexoesChar, connHrp)
+    end
+
+    for _, nome in ipairs({"Torso", "UpperTorso", "LowerTorso"}) do
+        local torso = char:FindFirstChild(nome)
+        if torso and torso:IsA("BasePart") then
+            marcarProtegido(torso)
+            local connTorso = torso.ChildAdded:Connect(function(obj)
+                limparInstancia(obj, char)
+            end)
+            table.insert(conexoesChar, connTorso)
+        end
+    end
+
+    task.spawn(function()
+        local inicio = os.clock()
+        while CONFIG_AF.Ativo and os.clock() - inicio < CONFIG_AF.DuracaoReforco do
+            varrerCharacter(char)
+            task.wait(CONFIG_AF.IntervaloVarredura)
+        end
+    end)
+end
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.spawn(function()
+        monitorarCharacter(char)
+    end)
+end)
+
+if LocalPlayer.Character then
+    task.spawn(function()
+        monitorarCharacter(LocalPlayer.Character)
+    end)
+end
+
+task.spawn(function()
+    while true do
+        task.wait(CONFIG_AF.IntervaloVarredura)
+        if CONFIG_AF.Ativo then
+            local char = LocalPlayer.Character
+            if char then
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    for _, obj in ipairs(hrp:GetChildren()) do
+                        if ehClassePerigosa(obj) then
+                            logAF("🗑️ Loop global removeu:", obj.ClassName)
+                            pcall(function() obj:Destroy() end)
+                        end
+                    end
+                end
+
+                local humanoid = char:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    if humanoid.PlatformStand or humanoid.Sit then
+                        pcall(function()
+                            humanoid.PlatformStand = false
+                            humanoid.Sit = false
+                        end)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+logAF("✅ Anti-Fling Universal carregado!")
+
+
+--=============================================================
 -- SISTEMA COMPLETO v7.3 - RESPAWN + MORPH (R6) + FREEZE 0.65s
 -- Mudanças v7.3:
 --   • Fade preto → fade AZUL CIANO TRANSPARENTE
@@ -41,8 +261,8 @@ local CONFIG = {
     -- ============================================
     -- 🎨 FADE (CIANO TRANSPARENTE)
     -- ============================================
-    CorFade = Color3.fromRGB(0, 220, 255),     -- azul ciano
-    TransparenciaFade = 0.55,                  -- 0 = opaco, 1 = invisível
+    CorFade = Color3.fromRGB(0, 220, 255),
+    TransparenciaFade = 0.55,
 
     -- ============================================
     -- 🥶 FREEZE NO RESPAWN
@@ -143,7 +363,7 @@ local CONFIG = {
 --=============================================================
 -- ESTADO GERAL
 --=============================================================
-local cframeSalvo = nil          -- CFrame completo (posição + rotação) salvo na morte
+local cframeSalvo = nil
 local localInvisivel = nil
 local conexoesCharacter = {}
 local salvandoAtivo = true
@@ -159,12 +379,10 @@ local colorCorrectionEffect = nil
 local cacheAudio = {}
 local morphDescCache = nil
 
--- 🥶 Freeze
 local freezeAtivo = false
 local freezeConexoes = {}
 local freezeToken = 0
 
--- 🔒 Cache do rig type
 local rigTypeJogo = nil
 
 local function log(...)
@@ -175,9 +393,6 @@ local function agora()
     return os.clock()
 end
 
---=============================================================
--- DETECTAR RIG TYPE
---=============================================================
 local function detectarRigType()
     if rigTypeJogo then return rigTypeJogo end
 
@@ -207,9 +422,6 @@ local function detectarRigType()
     return rigTypeJogo
 end
 
---=============================================================
--- PRÉ-CARREGAR ÁUDIOS
---=============================================================
 local function preCarregarAudio(id)
     if not id or id == "" then return end
     if cacheAudio[id] then return end
@@ -230,9 +442,6 @@ local function preCarregarAudio(id)
     end)
 end
 
---=============================================================
--- EFEITOS DE AMBIENTE
---=============================================================
 local function criarBlur(tamanho)
     pcall(function()
         if blurEffect then blurEffect:Destroy() end
@@ -280,9 +489,6 @@ local function removerColorCorrection(duracao)
     end)
 end
 
---=============================================================
--- 🥶 SISTEMA DE FREEZE
---=============================================================
 local function limparConexoesFreeze()
     for _, conn in ipairs(freezeConexoes) do
         pcall(function() if conn and conn.Disconnect then conn:Disconnect() end end)
@@ -361,9 +567,6 @@ local function iniciarFreeze(character, duracao)
     log("🥶 Freeze iniciado por", duracao, "s")
 end
 
---=============================================================
--- GUI UNIFICADA
---=============================================================
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "SistemaCompleto"
 screenGui.ResetOnSpawn = false
@@ -371,7 +574,6 @@ screenGui.IgnoreGuiInset = true
 screenGui.DisplayOrder = 999
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
--- 🌊 FADE CIANO TRANSPARENTE
 local fadeFrame = Instance.new("Frame")
 fadeFrame.Size = UDim2.new(1, 0, 1, 0)
 fadeFrame.BackgroundColor3 = CONFIG.CorFade
@@ -569,9 +771,6 @@ particulasContainer.BackgroundTransparency = 1
 particulasContainer.ZIndex = 1005
 particulasContainer.Parent = screenGui
 
---=============================================================
--- EFEITOS UTILITÁRIOS
---=============================================================
 local function flashTela(cor, duracao)
     pcall(function()
         flashFrame.BackgroundColor3 = cor
@@ -826,9 +1025,6 @@ local function efeitoParticulasTela(quantidade, cor)
     end)
 end
 
---=============================================================
--- AUTO MORPH (só R6)
---=============================================================
 local function obterMorphDesc()
     if morphDescCache then return morphDescCache end
     local okId, id = pcall(function() return Players:GetUserIdFromNameAsync(CONFIG.MorphUsername) end)
@@ -927,9 +1123,6 @@ local function aplicarMorph()
     return true
 end
 
---=============================================================
--- ÁUDIOS
---=============================================================
 local function pararAudiosRespawn()
     for _, sound in ipairs(audiosRespawnAtivos) do
         pcall(function()
@@ -979,9 +1172,6 @@ local function tocarAudiosRespawn()
     if s2 then table.insert(audiosRespawnAtivos, s2) end
 end
 
---=============================================================
--- EFEITOS DE MORTE
---=============================================================
 local function efeitoMorte()
     if CONFIG.MorteFlashCiano then
         task.spawn(function() flashTela(CONFIG.MorteCorCiano, CONFIG.MorteFlashDuracao) end)
@@ -1001,7 +1191,7 @@ local function efeitoMorte()
             TweenService:Create(
                 fadeFrame,
                 TweenInfo.new(CONFIG.MorteFadeDuracao, Enum.EasingStyle.Quad),
-                { BackgroundTransparency = CONFIG.TransparenciaFade }   -- 🌊 ciano transparente
+                { BackgroundTransparency = CONFIG.TransparenciaFade }
             ):Play()
         end)
     end
@@ -1062,11 +1252,7 @@ local function efeitoMorte()
     end
 end
 
---=============================================================
--- EFEITOS DE RESPAWN
---=============================================================
 local function efeitoRespawn()
-    -- 🌊 Fade ciano já visível (mantém a cor, só reseta transparente)
     fadeFrame.BackgroundColor3 = CONFIG.CorFade
     fadeFrame.BackgroundTransparency = CONFIG.TransparenciaFade
 
@@ -1119,7 +1305,6 @@ local function efeitoRespawn()
         task.spawn(function()
             task.wait(CONFIG.RespawnFragmentosDuracao * 0.7)
             flashTela(Color3.fromRGB(255, 255, 255), CONFIG.RespawnFlashDuracao)
-            -- 🌊 Apaga o fade ciano
             TweenService:Create(fadeFrame, TweenInfo.new(CONFIG.RespawnFadeOutDuracao, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 }):Play()
         end)
     else
@@ -1240,9 +1425,6 @@ local function efeitoPosRespawn()
     end
 end
 
---=============================================================
--- SALVAMENTO CONTÍNUO (CFrame COMPLETO: posição + rotação)
---=============================================================
 RunService.Heartbeat:Connect(function()
     if not salvandoAtivo then return end
     local character = player.Character
@@ -1279,9 +1461,6 @@ RunService.Heartbeat:Connect(function()
     tempoUltimoSalvamento = agoraT
 end)
 
---=============================================================
--- LIMPAR CONEXÕES
---=============================================================
 local function limparConexoes()
     for _, conn in ipairs(conexoesCharacter) do
         pcall(function() if conn and conn.Disconnect then conn:Disconnect() end end)
@@ -1289,9 +1468,6 @@ local function limparConexoes()
     conexoesCharacter = {}
 end
 
---=============================================================
--- CONFIGURAR CHARACTER
---=============================================================
 local function configurarCharacter(character)
     limparConexoes()
     local humanoid = character:WaitForChild("Humanoid", 10)
@@ -1300,7 +1476,7 @@ local function configurarCharacter(character)
     local conn = humanoid.Died:Connect(function()
         local rootPart = character:FindFirstChild("HumanoidRootPart")
         if rootPart then
-            local cf = rootPart.CFrame    -- 🔥 salva CFrame COMPLETO (posição + rotação)
+            local cf = rootPart.CFrame
             if cf.Position.Y > -100 then
                 cframeSalvo = cf
                 if localInvisivel and localInvisivel.Parent then localInvisivel:Destroy() end
@@ -1326,9 +1502,6 @@ local function configurarCharacter(character)
     table.insert(conexoesCharacter, conn)
 end
 
---=============================================================
--- RESPAWN
---=============================================================
 player.CharacterAdded:Connect(function(character)
     salvandoAtivo = false
     cicloAtual = cicloAtual + 1
@@ -1354,9 +1527,8 @@ player.CharacterAdded:Connect(function(character)
     task.wait(0.15)
 
     if cframeSalvo then
-        -- 🔥 APLICA CFrame COMPLETO: posição + rotação, só subindo OffsetY
         local posFinal = cframeSalvo.Position + Vector3.new(0, CONFIG.OffsetY, 0)
-        local rotacaoFinal = (cframeSalvo - cframeSalvo.Position)   -- só a rotação
+        local rotacaoFinal = (cframeSalvo - cframeSalvo.Position)
         rootPart.CFrame = CFrame.new(posFinal) * rotacaoFinal
 
         task.wait(0.2)
@@ -1379,9 +1551,6 @@ player.CharacterAdded:Connect(function(character)
     configurarCharacter(character)
 end)
 
---=============================================================
--- PRÉ-CARREGAR ÁUDIOS
---=============================================================
 if CONFIG.PreCarregarAudio then
     task.spawn(function()
         preCarregarAudio(CONFIG.AudioMorte)
@@ -1390,9 +1559,6 @@ if CONFIG.PreCarregarAudio then
     end)
 end
 
---=============================================================
--- INICIALIZAÇÃO
---=============================================================
 task.spawn(function() obterMorphDesc() end)
 task.spawn(function() detectarRigType() end)
 
