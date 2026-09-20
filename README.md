@@ -1,0 +1,2 @@
+# Rick-Prime
+Script
