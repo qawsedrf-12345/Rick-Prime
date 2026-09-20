@@ -1,7 +1,8 @@
 --=============================================================
--- SISTEMA COMPLETO v7.2 - RESPAWN + MORPH (R6) + FREEZE 0.65s
--- Correções: pcall em efeitos, os.clock(), morph só R6,
---             proteção contra freeze vazado, throttle seguro
+-- SISTEMA COMPLETO v7.3 - RESPAWN + MORPH (R6) + FREEZE 0.65s
+-- Mudanças v7.3:
+--   • Fade preto → fade AZUL CIANO TRANSPARENTE
+--   • Respawn mantém POSIÇÃO + ROTAÇÃO da morte
 --=============================================================
 
 local Players          = game:GetService("Players")
@@ -38,6 +39,12 @@ local CONFIG = {
     OffsetY = 3,
 
     -- ============================================
+    -- 🎨 FADE (CIANO TRANSPARENTE)
+    -- ============================================
+    CorFade = Color3.fromRGB(0, 220, 255),     -- azul ciano
+    TransparenciaFade = 0.55,                  -- 0 = opaco, 1 = invisível
+
+    -- ============================================
     -- 🥶 FREEZE NO RESPAWN
     -- ============================================
     FreezeAtivo = true,
@@ -62,7 +69,7 @@ local CONFIG = {
     MorteVinhetaVermelha = true,
     MorteVinhetaDuracao = 0.6,
     MorteVinhetaIntensidade = 0.8,
-    MorteFadePreto = true,
+    MorteFade = true,
     MorteFadeDuracao = 0.4,
     MorteCameraShake = true,
     MorteShakeIntensidade = 2.5,
@@ -136,7 +143,7 @@ local CONFIG = {
 --=============================================================
 -- ESTADO GERAL
 --=============================================================
-local cframeSalvo = nil
+local cframeSalvo = nil          -- CFrame completo (posição + rotação) salvo na morte
 local localInvisivel = nil
 local conexoesCharacter = {}
 local salvandoAtivo = true
@@ -157,7 +164,7 @@ local freezeAtivo = false
 local freezeConexoes = {}
 local freezeToken = 0
 
--- 🔒 Cache do rig type do jogo
+-- 🔒 Cache do rig type
 local rigTypeJogo = nil
 
 local function log(...)
@@ -169,12 +176,11 @@ local function agora()
 end
 
 --=============================================================
--- DETECTAR RIG TYPE DO JOGO
+-- DETECTAR RIG TYPE
 --=============================================================
 local function detectarRigType()
     if rigTypeJogo then return rigTypeJogo end
 
-    -- 1) Checa o jogador atual
     local char = player.Character
     if char then
         local hum = char:FindFirstChildOfClass("Humanoid")
@@ -185,7 +191,6 @@ local function detectarRigType()
         end
     end
 
-    -- 2) Checa outros jogadores no servidor
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= player and p.Character then
             local hum = p.Character:FindFirstChildOfClass("Humanoid")
@@ -197,9 +202,8 @@ local function detectarRigType()
         end
     end
 
-    -- 3) Fallback: R15 é o padrão atual da Roblox
     rigTypeJogo = Enum.HumanoidRigType.R15
-    log("⚠️ Não foi possível detectar rig. Assumindo R15.")
+    log("⚠️ Rig não detectado. Assumindo R15.")
     return rigTypeJogo
 end
 
@@ -222,9 +226,7 @@ local function preCarregarAudio(id)
             task.wait(0.1)
             tentativas = tentativas + 1
         end
-        if sound.IsLoaded then
-            log("✅ Áudio pré-carregado:", id)
-        end
+        if sound.IsLoaded then log("✅ Áudio pré-carregado:", id) end
     end)
 end
 
@@ -237,8 +239,7 @@ local function criarBlur(tamanho)
         blurEffect = Instance.new("BlurEffect")
         blurEffect.Size = 0
         blurEffect.Parent = Lighting
-        local tween = TweenService:Create(blurEffect, TweenInfo.new(0.1, Enum.EasingStyle.Quad), { Size = tamanho })
-        tween:Play()
+        TweenService:Create(blurEffect, TweenInfo.new(0.1, Enum.EasingStyle.Quad), { Size = tamanho }):Play()
     end)
 end
 
@@ -262,8 +263,7 @@ local function criarColorCorrection(saturacao, contraste, duracao)
         colorCorrectionEffect.Saturation = 0
         colorCorrectionEffect.Contrast = 0
         colorCorrectionEffect.Parent = Lighting
-        local tween = TweenService:Create(colorCorrectionEffect, TweenInfo.new(duracao, Enum.EasingStyle.Quad), { Saturation = saturacao, Contrast = contraste })
-        tween:Play()
+        TweenService:Create(colorCorrectionEffect, TweenInfo.new(duracao, Enum.EasingStyle.Quad), { Saturation = saturacao, Contrast = contraste }):Play()
     end)
 end
 
@@ -285,9 +285,7 @@ end
 --=============================================================
 local function limparConexoesFreeze()
     for _, conn in ipairs(freezeConexoes) do
-        pcall(function()
-            if conn and conn.Disconnect then conn:Disconnect() end
-        end)
+        pcall(function() if conn and conn.Disconnect then conn:Disconnect() end end)
     end
     freezeConexoes = {}
 end
@@ -295,7 +293,6 @@ end
 local function iniciarFreeze(character, duracao)
     if not CONFIG.FreezeAtivo then return end
 
-    -- 🔒 Token único: invalida freezes antigos
     freezeToken = freezeToken + 1
     local meuToken = freezeToken
 
@@ -322,9 +319,7 @@ local function iniciarFreeze(character, duracao)
     if CONFIG.FreezePulo then
         local connPulo = UserInputService.JumpRequest:Connect(function()
             if freezeAtivo and freezeToken == meuToken then
-                pcall(function()
-                    humanoid:ChangeState(Enum.HumanoidStateType.Seated)
-                end)
+                pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Seated) end)
             end
         end)
         table.insert(freezeConexoes, connPulo)
@@ -350,12 +345,9 @@ local function iniciarFreeze(character, duracao)
     table.insert(freezeConexoes, connPos)
 
     task.delay(duracao, function()
-        -- Só libera se ainda for o freeze atual
         if freezeToken ~= meuToken then return end
-
         freezeAtivo = false
         limparConexoesFreeze()
-
         if humanoid and humanoid.Parent then
             pcall(function()
                 humanoid.WalkSpeed = 16
@@ -363,7 +355,6 @@ local function iniciarFreeze(character, duracao)
                 humanoid.JumpHeight = 7.2
             end)
         end
-
         log("🥶 Freeze terminado")
     end)
 
@@ -371,7 +362,7 @@ local function iniciarFreeze(character, duracao)
 end
 
 --=============================================================
--- GUI UNIFICADA (RESPAWN)
+-- GUI UNIFICADA
 --=============================================================
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "SistemaCompleto"
@@ -380,9 +371,10 @@ screenGui.IgnoreGuiInset = true
 screenGui.DisplayOrder = 999
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
+-- 🌊 FADE CIANO TRANSPARENTE
 local fadeFrame = Instance.new("Frame")
 fadeFrame.Size = UDim2.new(1, 0, 1, 0)
-fadeFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+fadeFrame.BackgroundColor3 = CONFIG.CorFade
 fadeFrame.BackgroundTransparency = 1
 fadeFrame.BorderSizePixel = 0
 fadeFrame.ZIndex = 1000
@@ -640,7 +632,7 @@ end
 local function efeitoRGBSplit(duracao, deslocamento, pulsos)
     pulsos = pulsos or 1
     task.spawn(function()
-        for pulso = 1, pulsos do
+        for _ = 1, pulsos do
             task.spawn(function()
                 rgbR.BackgroundTransparency = 0.6
                 rgbG.BackgroundTransparency = 0.6
@@ -677,7 +669,6 @@ local function efeitoScanlines(duracao, velocidade)
         for _, linha in ipairs(scanlines) do
             linha.BackgroundTransparency = 0.7
         end
-
         local inicio = agora()
         local conn
         conn = RunService.RenderStepped:Connect(function()
@@ -836,18 +827,14 @@ local function efeitoParticulasTela(quantidade, cor)
 end
 
 --=============================================================
--- AUTO MORPH (só executa em R6)
+-- AUTO MORPH (só R6)
 --=============================================================
 local function obterMorphDesc()
     if morphDescCache then return morphDescCache end
-    local okId, id = pcall(function()
-        return Players:GetUserIdFromNameAsync(CONFIG.MorphUsername)
-    end)
+    local okId, id = pcall(function() return Players:GetUserIdFromNameAsync(CONFIG.MorphUsername) end)
     if not okId or not id then return nil end
 
-    local okDesc, desc = pcall(function()
-        return Players:GetHumanoidDescriptionFromUserId(id)
-    end)
+    local okDesc, desc = pcall(function() return Players:GetHumanoidDescriptionFromUserId(id) end)
     if not okDesc or not desc then return nil end
 
     morphDescCache = desc
@@ -859,11 +846,9 @@ local function aplicarMorph()
 
     local character = player.Character
     if not character then return false end
-
     local humanoid = character:FindFirstChildOfClass("Humanoid")
     if not humanoid then return false end
 
-    -- 🔒 Só aplica se o jogo for R6
     if humanoid.RigType ~= Enum.HumanoidRigType.R6 then
         log("🚫 Morph ignorado: jogo é R15")
         return false
@@ -877,7 +862,6 @@ local function aplicarMorph()
     end)
     if not okModel or not generatedModel then return false end
 
-    -- Limpa acessórios/roupas antigas
     for _, item in ipairs(character:GetChildren()) do
         if item:IsA("Accessory") or item:IsA("Clothing") or item:IsA("ShirtGraphic")
             or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
@@ -885,7 +869,6 @@ local function aplicarMorph()
         end
     end
 
-    -- Cores dos membros
     for _, targetItem in ipairs(generatedModel:GetChildren()) do
         local existing = character:FindFirstChild(targetItem.Name)
         if existing and existing:IsA("BasePart") and existing.Name ~= "HumanoidRootPart" then
@@ -893,13 +876,11 @@ local function aplicarMorph()
         end
     end
 
-    -- Rosto + mesh da cabeça
     local targetHead = generatedModel:FindFirstChild("Head")
     local currentHead = character:FindFirstChild("Head")
     if targetHead and currentHead then
         local oldFace = currentHead:FindFirstChildOfClass("Decal")
         if oldFace then oldFace:Destroy() end
-
         local newFace = targetHead:FindFirstChildOfClass("Decal")
         if newFace then
             newFace:Clone().Parent = currentHead
@@ -909,14 +890,12 @@ local function aplicarMorph()
             defaultFace.Texture = "rbxasset://textures/face.png"
             defaultFace.Parent = currentHead
         end
-
         local oldMesh = currentHead:FindFirstChildOfClass("SpecialMesh")
         if oldMesh then oldMesh:Destroy() end
         local newMesh = targetHead:FindFirstChildOfClass("SpecialMesh")
         if newMesh then newMesh:Clone().Parent = currentHead end
     end
 
-    -- Roupas + acessórios
     for _, item in ipairs(generatedModel:GetChildren()) do
         if item:IsA("Clothing") or item:IsA("ShirtGraphic") or item:IsA("BodyColors")
             or item:IsA("CharacterMesh") then
@@ -949,7 +928,7 @@ local function aplicarMorph()
 end
 
 --=============================================================
--- ÁUDIOS DE RESPAWN
+-- ÁUDIOS
 --=============================================================
 local function pararAudiosRespawn()
     for _, sound in ipairs(audiosRespawnAtivos) do
@@ -1016,10 +995,14 @@ local function efeitoMorte()
     if CONFIG.MorteVinhetaVermelha then
         task.spawn(function() vinhetaTela(Color3.fromRGB(255, 0, 0), CONFIG.MorteVinhetaDuracao, CONFIG.MorteVinhetaIntensidade) end)
     end
-    if CONFIG.MorteFadePreto then
+    if CONFIG.MorteFade then
         task.spawn(function()
             task.wait(0.15)
-            TweenService:Create(fadeFrame, TweenInfo.new(CONFIG.MorteFadeDuracao, Enum.EasingStyle.Quad), { BackgroundTransparency = 0 }):Play()
+            TweenService:Create(
+                fadeFrame,
+                TweenInfo.new(CONFIG.MorteFadeDuracao, Enum.EasingStyle.Quad),
+                { BackgroundTransparency = CONFIG.TransparenciaFade }   -- 🌊 ciano transparente
+            ):Play()
         end)
     end
     if CONFIG.MorteCameraShake then
@@ -1083,7 +1066,9 @@ end
 -- EFEITOS DE RESPAWN
 --=============================================================
 local function efeitoRespawn()
-    fadeFrame.BackgroundTransparency = 0
+    -- 🌊 Fade ciano já visível (mantém a cor, só reseta transparente)
+    fadeFrame.BackgroundColor3 = CONFIG.CorFade
+    fadeFrame.BackgroundTransparency = CONFIG.TransparenciaFade
 
     if CONFIG.RespawnFragmentos then
         task.spawn(function()
@@ -1134,6 +1119,7 @@ local function efeitoRespawn()
         task.spawn(function()
             task.wait(CONFIG.RespawnFragmentosDuracao * 0.7)
             flashTela(Color3.fromRGB(255, 255, 255), CONFIG.RespawnFlashDuracao)
+            -- 🌊 Apaga o fade ciano
             TweenService:Create(fadeFrame, TweenInfo.new(CONFIG.RespawnFadeOutDuracao, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 }):Play()
         end)
     else
@@ -1255,7 +1241,7 @@ local function efeitoPosRespawn()
 end
 
 --=============================================================
--- SALVAMENTO CONTÍNUO
+-- SALVAMENTO CONTÍNUO (CFrame COMPLETO: posição + rotação)
 --=============================================================
 RunService.Heartbeat:Connect(function()
     if not salvandoAtivo then return end
@@ -1298,9 +1284,7 @@ end)
 --=============================================================
 local function limparConexoes()
     for _, conn in ipairs(conexoesCharacter) do
-        pcall(function()
-            if conn and conn.Disconnect then conn:Disconnect() end
-        end)
+        pcall(function() if conn and conn.Disconnect then conn:Disconnect() end end)
     end
     conexoesCharacter = {}
 end
@@ -1316,7 +1300,7 @@ local function configurarCharacter(character)
     local conn = humanoid.Died:Connect(function()
         local rootPart = character:FindFirstChild("HumanoidRootPart")
         if rootPart then
-            local cf = rootPart.CFrame
+            local cf = rootPart.CFrame    -- 🔥 salva CFrame COMPLETO (posição + rotação)
             if cf.Position.Y > -100 then
                 cframeSalvo = cf
                 if localInvisivel and localInvisivel.Parent then localInvisivel:Destroy() end
@@ -1351,15 +1335,10 @@ player.CharacterAdded:Connect(function(character)
     audioTocadoNesteCiclo = false
     pararAudiosRespawn()
 
-    -- 🥶 FREEZE IMEDIATO
-    task.spawn(function()
-        iniciarFreeze(character, CONFIG.FreezeDuracao)
-    end)
+    task.spawn(function() iniciarFreeze(character, CONFIG.FreezeDuracao) end)
 
     task.spawn(function()
-        if CONFIG.DelayAudioRespawn > 0 then
-            task.wait(CONFIG.DelayAudioRespawn)
-        end
+        if CONFIG.DelayAudioRespawn > 0 then task.wait(CONFIG.DelayAudioRespawn) end
         tocarAudiosRespawn()
     end)
 
@@ -1375,7 +1354,11 @@ player.CharacterAdded:Connect(function(character)
     task.wait(0.15)
 
     if cframeSalvo then
-        rootPart.CFrame = cframeSalvo + Vector3.new(0, CONFIG.OffsetY, 0)
+        -- 🔥 APLICA CFrame COMPLETO: posição + rotação, só subindo OffsetY
+        local posFinal = cframeSalvo.Position + Vector3.new(0, CONFIG.OffsetY, 0)
+        local rotacaoFinal = (cframeSalvo - cframeSalvo.Position)   -- só a rotação
+        rootPart.CFrame = CFrame.new(posFinal) * rotacaoFinal
+
         task.wait(0.2)
         if localInvisivel and localInvisivel.Parent then localInvisivel:Destroy() end
         localInvisivel = nil
@@ -1410,14 +1393,8 @@ end
 --=============================================================
 -- INICIALIZAÇÃO
 --=============================================================
-task.spawn(function()
-    obterMorphDesc()
-end)
-
--- Detecta rig type já no início
-task.spawn(function()
-    detectarRigType()
-end)
+task.spawn(function() obterMorphDesc() end)
+task.spawn(function() detectarRigType() end)
 
 if player.Character then
     task.spawn(function()
